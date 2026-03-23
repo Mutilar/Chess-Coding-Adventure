@@ -201,15 +201,14 @@
 				// (Note: returns a draw score even if this position has only appeared once for sake of simplicity)
 				if (board.CurrentGameState.fiftyMoveCounter >= 100 || repetitionTable.Contains(board.CurrentGameState.zobristKey))
 				{
-					/*
+					// Contempt: prefer a slightly worse position over a draw
+					// so the engine actively avoids repetition in non-endgame positions.
 					const int contempt = 50;
-					// So long as not in king and pawn ending, prefer a slightly worse position over game ending in a draw
-					if (board.totalPieceCountWithoutPawnsAndKings > 0)
+					if (board.TotalPieceCountWithoutPawnsAndKings > 0)
 					{
-						bool isAITurn = board.IsWhiteToMove == aiPlaysWhite;
-						return isAITurn ? -contempt : contempt;
+						bool isSearchSideTurn = board.IsWhiteToMove == isPlayingWhite;
+						return isSearchSideTurn ? -contempt : contempt;
 					}
-					*/
 					return 0;
 				}
 
@@ -512,6 +511,8 @@
 
 			for (int searchDepth = 1; searchDepth <= maxDepth; searchDepth++)
 			{
+				if (searchCancelled) break;
+
 				bestEvalThisIteration = int.MinValue;
 				bestMoveThisIteration = Move.NullMove;
 				hasSearchedAtLeastOneMove = false;
@@ -524,7 +525,7 @@
 					int aspBeta = bestEval + aspirationWindow;
 					int aspResult = Search(searchDepth, 0, aspAlpha, aspBeta);
 
-					if (aspResult <= aspAlpha || aspResult >= aspBeta)
+					if (!searchCancelled && (aspResult <= aspAlpha || aspResult >= aspBeta))
 					{
 						bestEvalThisIteration = int.MinValue;
 						bestMoveThisIteration = Move.NullMove;
@@ -536,6 +537,8 @@
 				{
 					Search(searchDepth, 0, negativeInfinity, positiveInfinity);
 				}
+
+				if (searchCancelled) break;
 
 				if (hasSearchedAtLeastOneMove)
 				{
