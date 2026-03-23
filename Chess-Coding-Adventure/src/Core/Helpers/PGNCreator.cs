@@ -37,7 +37,7 @@ namespace Chess.Core
 			{
 				pgn.AppendLine($"[FEN \"{startFen}\"]");
 			}
-			if (result is not GameResult.NotStarted or GameResult.InProgress)
+			if (result is not (GameResult.NotStarted or GameResult.InProgress))
 			{
 				pgn.AppendLine($"[Result \"{result}\"]");
 			}

@@ -49,6 +49,9 @@
 			whiteEval.pawnShieldScore = KingPawnShield(Board.WhiteIndex, blackMaterial, blackEval.pieceSquareScore);
 			blackEval.pawnShieldScore = KingPawnShield(Board.BlackIndex, whiteMaterial, whiteEval.pieceSquareScore);
 
+			whiteEval.bonusScore = EvaluatePieceBonuses(Board.WhiteIndex);
+			blackEval.bonusScore = EvaluatePieceBonuses(Board.BlackIndex);
+
 			int perspective = board.IsWhiteToMove ? 1 : -1;
 			int eval = whiteEval.Sum() - blackEval.Sum();
 			return eval * perspective;
@@ -168,6 +171,50 @@
 			return bonus + isolatedPawnPenaltyByCount[numIsolatedPawns];
 		}
 
+		int EvaluatePieceBonuses(int colourIndex)
+		{
+			int bonus = 0;
+			bool isWhite = colourIndex == Board.WhiteIndex;
+
+			// Bishop pair bonus
+			if (board.Bishops[colourIndex].Count >= 2)
+			{
+				bonus += 30;
+			}
+
+			// Rook bonuses
+			ulong friendlyPawns = board.PieceBitboards[Piece.MakePiece(Piece.Pawn, isWhite)];
+			ulong enemyPawns = board.PieceBitboards[Piece.MakePiece(Piece.Pawn, !isWhite)];
+			PieceList rooks = board.Rooks[colourIndex];
+
+			for (int i = 0; i < rooks.Count; i++)
+			{
+				ulong fileMask = Bits.FileMask[BoardHelper.FileIndex(rooks[i])];
+
+				// Rook on open file (no pawns at all)
+				if ((fileMask & (friendlyPawns | enemyPawns)) == 0)
+				{
+					bonus += 20;
+				}
+				// Rook on semi-open file (no friendly pawns)
+				else if ((fileMask & friendlyPawns) == 0)
+				{
+					bonus += 10;
+				}
+			}
+
+			// Connected rooks: two rooks that can see each other along a rank or file
+			if (rooks.Count >= 2)
+			{
+				ulong rookAttacks = Magic.GetRookAttacks(rooks[0], board.AllPiecesBitboard);
+				if (BitBoardUtility.ContainsSquare(rookAttacks, rooks[1]))
+				{
+					bonus += 10;
+				}
+			}
+
+			return bonus;
+		}
 
 
 		float EndgamePhaseWeight(int materialCountWithoutPawns)
@@ -248,10 +295,11 @@
 			public int pieceSquareScore;
 			public int pawnScore;
 			public int pawnShieldScore;
+			public int bonusScore;
 
 			public int Sum()
 			{
-				return materialScore + mopUpScore + pieceSquareScore + pawnScore + pawnShieldScore;
+				return materialScore + mopUpScore + pieceSquareScore + pawnScore + pawnShieldScore + bonusScore;
 			}
 		}
 

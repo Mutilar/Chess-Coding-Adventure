@@ -5,13 +5,13 @@ namespace Chess.Core
 {
 	public class RepetitionTable
 	{
-		readonly ulong[] hashes;
-		readonly int[] startIndices;
+		ulong[] hashes;
+		int[] startIndices;
 		int count;
 
 		public RepetitionTable()
 		{
-			hashes = new ulong[256];
+			hashes = new ulong[1024];
 			startIndices = new int[hashes.Length + 1];
 		}
 
@@ -31,12 +31,14 @@ namespace Chess.Core
 
 		public void Push(ulong hash, bool reset)
 		{
-			// Check bounds just in case
-			if (count < hashes.Length)
+			if (count >= hashes.Length)
 			{
-				hashes[count] = hash;
-				startIndices[count + 1] = reset ? count : startIndices[count];
+				int newSize = hashes.Length * 2;
+				Array.Resize(ref hashes, newSize);
+				Array.Resize(ref startIndices, newSize + 1);
 			}
+			hashes[count] = hash;
+			startIndices[count + 1] = reset ? count : startIndices[count];
 			count++;
 		}
 

@@ -1,6 +1,4 @@
-﻿using System.Numerics;
-
-namespace Chess.Core
+﻿namespace Chess.Core
 {
 	public static class BitBoardUtility
 	{
@@ -26,9 +24,21 @@ namespace Chess.Core
 		// Get index of least significant set bit in given 64bit value. Also clears the bit to zero.
 		public static int PopLSB(ref ulong b)
 		{
-			int i = BitOperations.TrailingZeroCount(b);
+			int i = TrailingZeroCount(b);
 			b &= (b - 1);
 			return i;
+		}
+
+		static int TrailingZeroCount(ulong value)
+		{
+			if (value == 0) return 64;
+			int count = 0;
+			while ((value & 1UL) == 0)
+			{
+				count++;
+				value >>= 1;
+			}
+			return count;
 		}
 
 		public static void SetSquare(ref ulong bitboard, int squareIndex)

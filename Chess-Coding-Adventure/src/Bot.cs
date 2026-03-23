@@ -5,8 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using static System.Math;
 
-namespace CodingAdventureBot;
-
+namespace CodingAdventureBot
+{
 public class Bot
 {
 	// # Settings
@@ -181,4 +181,5 @@ public class Bot
 	{
 		return File.ReadAllText(GetResourcePath(localPath));
 	}
+}
 }

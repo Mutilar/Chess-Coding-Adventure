@@ -551,7 +551,7 @@ namespace Chess.Core
 		{
 			AllGameMoves = new List<Move>();
 			KingSquare = new int[2];
-			Array.Clear(Square);
+			Array.Clear(Square, 0, Square.Length);
 
 			RepetitionPositionHistory = new Stack<ulong>(capacity: 64);
 			gameStateHistory = new Stack<GameState>(capacity: 64);

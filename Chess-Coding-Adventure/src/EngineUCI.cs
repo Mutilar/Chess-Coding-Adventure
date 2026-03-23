@@ -2,8 +2,8 @@
 using System;
 using System.IO;
 
-namespace CodingAdventureBot;
-
+namespace CodingAdventureBot
+{
 public class EngineUCI
 {
 	readonly Bot player;
@@ -183,4 +183,5 @@ public class EngineUCI
 		}
 	}
 
+}
 }

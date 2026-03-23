@@ -25,7 +25,7 @@
 		Move bestMove;
 		int bestEval;
 		bool hasSearchedAtLeastOneMove;
-		bool searchCancelled;
+		volatile bool searchCancelled;
 
 		// Diagnostics
 		public SearchDiagnostics searchDiagnostics;
@@ -102,7 +102,27 @@
 				debugInfo += "\nStarting Iteration: " + searchDepth;
 				searchIterationTimer.Restart();
 				currentIterationDepth = searchDepth;
-				Search(searchDepth, 0, negativeInfinity, positiveInfinity);
+
+				// Aspiration windows: narrow window around previous eval from depth 4+
+				if (searchDepth >= 4 && !IsMateScore(bestEval))
+				{
+					const int aspirationWindow = 30;
+					int aspAlpha = bestEval - aspirationWindow;
+					int aspBeta = bestEval + aspirationWindow;
+					int aspResult = Search(searchDepth, 0, aspAlpha, aspBeta);
+
+					if (!searchCancelled && (aspResult <= aspAlpha || aspResult >= aspBeta))
+					{
+						bestEvalThisIteration = int.MinValue;
+						bestMoveThisIteration = Move.NullMove;
+						hasSearchedAtLeastOneMove = false;
+						Search(searchDepth, 0, negativeInfinity, positiveInfinity);
+					}
+				}
+				else
+				{
+					Search(searchDepth, 0, negativeInfinity, positiveInfinity);
+				}
 
 				if (searchCancelled)
 				{
@@ -130,6 +150,14 @@
 					{
 						debugInfo += " Mate in ply: " + NumPlyToMateFromScore(bestEval);
 					}
+
+					// UCI info output
+					long elapsedMs = searchTotalTimer.ElapsedMilliseconds;
+					long nps = elapsedMs > 0 ? (searchDiagnostics.numPositionsEvaluated * 1000L) / elapsedMs : 0;
+					string scoreStr = IsMateScore(bestEval)
+						? $"score mate {(bestEval > 0 ? "" : "-")}{(NumPlyToMateFromScore(bestEval) + 1) / 2}"
+						: $"score cp {bestEval}";
+					Console.WriteLine($"info depth {searchDepth} {scoreStr} nodes {searchDiagnostics.numPositionsEvaluated} nps {nps} time {elapsedMs}");
 
 					bestEvalThisIteration = int.MinValue;
 					bestMoveThisIteration = Move.NullMove;
@@ -160,7 +188,7 @@
 		}
 
 
-		int Search(int plyRemaining, int plyFromRoot, int alpha, int beta, int numExtensions = 0, Move prevMove = default, bool prevWasCapture = false)
+		int Search(int plyRemaining, int plyFromRoot, int alpha, int beta, int numExtensions = 0, Move prevMove = default, bool prevWasCapture = false, bool allowNullMove = true)
 		{
 			if (searchCancelled)
 			{
@@ -216,6 +244,20 @@
 				return evaluation;
 			}
 
+			// Null-move pruning: if giving opponent a free move still results in a beta cutoff,
+			// the position is likely so good that we can prune this branch
+			if (allowNullMove && plyFromRoot > 0 && plyRemaining >= 3 && !board.IsInCheck() && board.TotalPieceCountWithoutPawnsAndKings > 0)
+			{
+				board.MakeNullMove();
+				int nullEval = -Search(plyRemaining - 1 - 2, plyFromRoot + 1, -beta, -beta + 1, numExtensions, Move.NullMove, true, allowNullMove: false);
+				board.UnmakeNullMove();
+				if (searchCancelled) return 0;
+				if (nullEval >= beta)
+				{
+					return beta;
+				}
+			}
+
 			Span<Move> moves = stackalloc Move[256];
 			moveGenerator.GenerateMoves(board, ref moves, capturesOnly: false);
 			Move prevBestMove = plyFromRoot == 0 ? bestMove : transpositionTable.TryGetStoredMove();
@@ -268,16 +310,27 @@
 
 				bool needsFullSearch = true;
 				int eval = 0;
-				// Reduce the depth of the search for moves later in the move list as these are less likely to be good
-				// (assuming our move ordering isn't terrible)
-				if (extension == 0 && plyRemaining >= 3 && i >= 3 && !isCapture)
+
+				if (i > 0)
 				{
-					const int reduceDepth = 1;
-					eval = -Search(plyRemaining - 1 - reduceDepth, plyFromRoot + 1, -alpha - 1, -alpha, numExtensions, move, isCapture);
-					// If the evaluation is better than expected, we'd better to a full-depth search to get a more accurate evaluation
+					// Late Move Reductions: reduce depth for quiet moves later in the list
+					if (extension == 0 && plyRemaining >= 3 && i >= 3 && !isCapture)
+					{
+						// Variable reduction based on depth and move index
+						int R = 1 + (int)(Log(plyRemaining) * Log(i) / 3.5);
+						R = Min(R, plyRemaining - 1);
+						eval = -Search(plyRemaining - 1 - R, plyFromRoot + 1, -alpha - 1, -alpha, numExtensions, move, isCapture);
+					}
+					else
+					{
+						// PVS: zero-window search for non-PV moves
+						eval = -Search(plyRemaining - 1 + extension, plyFromRoot + 1, -alpha - 1, -alpha, numExtensions + extension, move, isCapture);
+					}
+					// If reduced/zero-window search beat alpha, verify with full-depth full-window search
 					needsFullSearch = eval > alpha;
 				}
-				// Perform a full-depth search
+
+				// Full-depth full-window search (always for first move, re-search for others if needed)
 				if (needsFullSearch)
 				{
 					eval = -Search(plyRemaining - 1 + extension, plyFromRoot + 1, -beta, -alpha, numExtensions + extension, move, isCapture);
@@ -350,19 +403,17 @@
 			{
 				return 0;
 			}
-			// A player isn't forced to make a capture (typically), so see what the evaluation is without capturing anything.
-			// This prevents situations where a player ony has bad captures available from being evaluated as bad,
-			// when the player might have good non-capture moves available.
-			int eval = evaluation.Evaluate(board);
+			// Stand-pat: evaluate the position without making any capture.
+			int standPat = evaluation.Evaluate(board);
 			searchDiagnostics.numPositionsEvaluated++;
-			if (eval >= beta)
+			if (standPat >= beta)
 			{
 				searchDiagnostics.numCutOffs++;
 				return beta;
 			}
-			if (eval > alpha)
+			if (standPat > alpha)
 			{
-				alpha = eval;
+				alpha = standPat;
 			}
 
 			Span<Move> moves = stackalloc Move[128];
@@ -370,8 +421,17 @@
 			moveOrderer.OrderMoves(Move.NullMove, board, moves, moveGenerator.opponentAttackMap, moveGenerator.opponentPawnAttackMap, true, 0);
 			for (int i = 0; i < moves.Length; i++)
 			{
+				// Delta pruning: skip captures that can't possibly raise alpha
+				int capPieceType = moves[i].MoveFlag == Move.EnPassantCaptureFlag
+					? Piece.Pawn
+					: Piece.PieceType(board.Square[moves[i].TargetSquare]);
+				if (standPat + GetStaticPieceValue(capPieceType) + 200 < alpha)
+				{
+					continue;
+				}
+
 				board.MakeMove(moves[i], true);
-				eval = -QuiescenceSearch(-beta, -alpha);
+				int eval = -QuiescenceSearch(-beta, -alpha);
 				board.UnmakeMove(moves[i], true);
 
 				if (eval >= beta)
@@ -388,6 +448,16 @@
 			return alpha;
 		}
 
+
+		static int GetStaticPieceValue(int pieceType) => pieceType switch
+		{
+			Piece.Pawn => Evaluation.PawnValue,
+			Piece.Knight => Evaluation.KnightValue,
+			Piece.Bishop => Evaluation.BishopValue,
+			Piece.Rook => Evaluation.RookValue,
+			Piece.Queen => Evaluation.QueenValue,
+			_ => 0
+		};
 
 		public static bool IsMateScore(int score)
 		{
@@ -417,6 +487,83 @@
 				return $"{sideWithMate} can mate in {numMovesToMate} move{((numMovesToMate > 1) ? "s" : "")}";
 			}
 			return "No mate found";
+		}
+
+		/// <summary>
+		/// Run a depth-limited search (blocks until complete). No time limit.
+		/// Returns (bestMove, eval) for the current position.
+		/// </summary>
+		public (Move move, int eval) SearchToDepth(int maxDepth)
+		{
+			bestEvalThisIteration = bestEval = 0;
+			bestMoveThisIteration = bestMove = Move.NullMove;
+
+			isPlayingWhite = board.IsWhiteToMove;
+			moveOrderer.ClearHistory();
+			repetitionTable.Init(board);
+
+			CurrentDepth = 0;
+			searchCancelled = false;
+			searchDiagnostics = new SearchDiagnostics();
+			searchIterationTimer = new System.Diagnostics.Stopwatch();
+			searchTotalTimer = System.Diagnostics.Stopwatch.StartNew();
+
+			maxDepth = Max(1, Min(maxDepth, 256));
+
+			for (int searchDepth = 1; searchDepth <= maxDepth; searchDepth++)
+			{
+				bestEvalThisIteration = int.MinValue;
+				bestMoveThisIteration = Move.NullMove;
+				hasSearchedAtLeastOneMove = false;
+				currentIterationDepth = searchDepth;
+
+				if (searchDepth >= 4 && !IsMateScore(bestEval))
+				{
+					const int aspirationWindow = 30;
+					int aspAlpha = bestEval - aspirationWindow;
+					int aspBeta = bestEval + aspirationWindow;
+					int aspResult = Search(searchDepth, 0, aspAlpha, aspBeta);
+
+					if (aspResult <= aspAlpha || aspResult >= aspBeta)
+					{
+						bestEvalThisIteration = int.MinValue;
+						bestMoveThisIteration = Move.NullMove;
+						hasSearchedAtLeastOneMove = false;
+						Search(searchDepth, 0, negativeInfinity, positiveInfinity);
+					}
+				}
+				else
+				{
+					Search(searchDepth, 0, negativeInfinity, positiveInfinity);
+				}
+
+				if (hasSearchedAtLeastOneMove)
+				{
+					bestMove = bestMoveThisIteration;
+					bestEval = bestEvalThisIteration;
+				}
+				CurrentDepth = searchDepth;
+
+				if (IsMateScore(bestEval) && NumPlyToMateFromScore(bestEval) <= searchDepth)
+					break;
+			}
+
+			if (bestMove.IsNull)
+			{
+				var moves = moveGenerator.GenerateMoves(board);
+				if (moves.Length > 0) bestMove = moves[0];
+			}
+
+			return (bestMove, bestEval);
+		}
+
+		/// <summary>
+		/// Run static evaluation of the current position.
+		/// Returns centipawn score from the perspective of the side to move.
+		/// </summary>
+		public int StaticEval()
+		{
+			return evaluation.Evaluate(board);
 		}
 
 		public void ClearForNewPosition()
